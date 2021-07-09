@@ -10,11 +10,11 @@ TYPE_SPEED=180
 
 NO_WAIT=${NO_WAIT_USE}
 
+BOLD="\033[1m"
+
 DEMO_PROMPT=""
 DEMO_CMD_COLOR=${BOLD}
 DEMO_COMMENT_COLOR=${BLUE}
-
-BOLD="\033[1m"
 
 preamble() {
     p "################################################################################
@@ -22,6 +22,8 @@ preamble() {
 ################################################################################"
     echo
     p "# A demonstration of an AppArmor profile to **allow** \`cat\` access to a Kubernetes secret."
+    echo
+    p "# Warning! When experimenting with AppArmor consider using a virtual machine due to a risk of **locking yourself out**!"
     echo
     echo -e "In this demo comments are ${BLUE}blue${COLOR_RESET}, and commands are ${BOLD}bold${COLOR_RESET}"
     echo
@@ -35,18 +37,23 @@ setup() {
     p "# Bring up k3s with the AppArmor feature gate enabled"
     pei "curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=v1.21.2+k3s1 sh -s - --kube-apiserver-arg=feature-gates=AppArmor=true"
     echo
-    p "# Change the owner of the kubeconfig files created by k3s"
-    pei "sudo chown vagrant.vagrant /etc/rancher/k3s/k3s.yaml"
+    p "# Change the owner of the kubeconfig file created by k3s"
+    pei "sudo chown ${USER} /etc/rancher/k3s/k3s.yaml"
+    pei "sudo ls -al /etc/rancher/k3s"
+    echo    
+    p "# Set the KUBECONFIG environment variable"
+    pei "export KUBECONFIG=/etc/rancher/k3s/k3s.yaml"
     echo
     p "# Make sure the k8s node has STATUS Ready"
+    pei "kubectl wait --for=condition=Ready node/${HOSTNAME}"
     pei "kubectl get node"
     echo
     p "# We are ready for the next section."
 }
 
 cleanup() {
-    sudo apparmor_parser -Rq /etc/apparmor.d/secret-access 2&>1 > /dev/null || true
-    sudo rm -f /etc/apparmor.d/secret-access
+    sudo apparmor_parser -Rq /etc/apparmor.d/secret-* 2&>1 > /dev/null || true
+    sudo rm -f /etc/apparmor.d/secret-*
     sudo aa-remove-unknown 2&>1 > /dev/null || true
     kubectl delete pod pod-secret-access --force --grace-period=0 2&>1 > /dev/null || true
     kubectl delete secret secret-thing 2&>1 > /dev/null || true
@@ -125,7 +132,7 @@ metadata:
 spec:
   containers:
     - name: container
-      image: busybox
+      image: ubuntu
       command: ["sleep", "infinity"]
       volumeMounts:
       - name: volume-secret
@@ -144,11 +151,13 @@ EOF"
     pei "! kubectl exec -it pod-secret-access -- cat /etc/secret/favorite"
     pei "! kubectl exec -it pod-secret-access -- tail /etc/secret/favorite"
     echo
-    p "# Note that this AppArmor profile on the host behaves differently when assigned to a container."
+    p "# Note that this AppArmor profile on the host behaves differently when assigned to a container.
+AppArmor limits the capabilities on the process level. Let's get the information
+about the process confinement inside of the container"
+    pei "kubectl exec -it pod-secret-access -- bash -c 'sleep 0 & tail & cat & ps auxZ'"
     echo
-    p "# Let's remove the unsatisfactory profile (this removes also dynamically loaded profiles)"
-    pei "sudo rm /etc/apparmor.d/secret-access
-sudo aa-remove-unknown"
+    p "# Let's remove the unsatisfactory profile"
+    pei "sudo apparmor_parser -R /etc/apparmor.d/secret-*"
     echo
     p "# Verify that \`cat\` can read the secret again on the host"
     pei "cat /etc/secret/favorite"
@@ -175,27 +184,25 @@ allow_cat() {
 profile secret-access {
   #include <abstractions/base>
 
-  # Executables
+  /{,usr/}bin/cat Cx -> allow,  # Transition to child (local-profile)
 
-  /{,usr/}bin/cat cx -> allow,
-
-  /{,usr/}bin/** cx -> deny,
+  /{,usr/}bin/** Cx -> deny,  # Transition to child (local-profile)
 
   profile allow {
     #include <abstractions/base>
 
-    /{,usr/}bin/** mrPix,  # Try to use an existing program profile
+    /{,usr/}bin/** ix,  # Execute the program inheriting the current profile
 
-    /** rw,  # Allow read/write to / and its subdirectories and files
+    file,  # Allow all files access
     /etc/secret/** r,  # Allow read of /etc/secret and its subdirectories and files
   }
 
   profile deny {
     #include <abstractions/base>
 
-    /{,usr/}bin/** mrPix,  # Try to use an existing program profile
+    /{,usr/}bin/** ix,  # Execute the program inheriting the current profile
 
-    /** rw,  # Allow read/write to / and its subdirectories and files
+    file,  # Allow all files access
     deny /etc/secret/** rw,  # Deny read/write to /etc/secret and its subdirectories and files
   }
 }
@@ -213,10 +220,13 @@ sudo aa-status | grep secret-access"
     pei "kubectl wait --for=condition=Ready pod/pod-secret-access"
     pei "kubectl get pod"
     echo
-    p "# Verify both using the \`command\` and \`shell\` kubectl access"
+    p "# Verify both using the \`command\` and \`shell\` kubectl access. Note the difference!"
     pei "! kubectl exec -it pod-secret-access -- tail /etc/secret/favorite"
     pei "! kubectl exec -it pod-secret-access -- sh -c 'tail /etc/secret/favorite'"
     pei "! kubectl exec -it pod-secret-access -- cat /etc/secret/favorite"
+    echo
+    p "# Let's get the information about the process confinement inside of the container"
+    pei "kubectl exec -it pod-secret-access -- bash -c 'sleep 0 & tail & cat & ps auxZ'"
     echo
     p "# Read the secret"
     pei "kubectl exec -it pod-secret-access -- sh -c 'cat /etc/secret/favorite'"
@@ -227,10 +237,10 @@ sudo aa-status | grep secret-access"
 
 finale() {
     echo
-    p "# The created AppArmor profile seems to achieve the goal of the demo. However, it should be noted that it's
-more of a hack than a proper AppArmor profile, which probably would be more complex.
-It can be verified that the above \`secret-access\` profile does not grant all programs their default access,
-moreover the pod is missing other capabilities like network access."
+    p "# The created AppArmor profile seems to achieve the goal of the demo.
+However, it should be noted that a complete profile would be more complex.
+It can be also verified that the above \`secret-access\` profile does not provide all programs
+their default access, moreover the pod is missing other capabilities like network access."
     echo
     p "################################################################################
 #                               End of Demo                                    #

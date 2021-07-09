@@ -8,11 +8,18 @@ jobs:
     name: main
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: checkout
         uses: actions/checkout@v2
 
-      - name: git clone https://github.com/paxtonhare/demo-magic
-        run: git clone https://github.com/paxtonhare/demo-magic
+      - name: git clone https://github.com/marcindulak/demo-magic
+        run: git clone https://github.com/marcindulak/demo-magic
 
-      - name: NO_WAIT=true bash demo.sh
-        run: NO_WAIT=true bash demo.sh
+      - name: sudo apt-get update && sudo apt-get install -y pv
+        run: sudo apt-get update && sudo apt-get install -y pv
+
+      - name: TERM=linux NO_WAIT=true bash demo.sh
+        # stty: standard input: Inappropriate ioctl for device
+        # https://github.com/actions/runner/issues/241#issuecomment-745902718
+        shell: 'script -q -e -c "bash {0}"'
+        run: |
+          TERM=linux NO_WAIT=true bash demo.sh

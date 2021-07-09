@@ -1,5 +1,6 @@
 demo-magic
 .vagrant
 old
+*.yaml
 *.log
 *~
