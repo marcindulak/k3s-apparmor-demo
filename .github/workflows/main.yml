@@ -1,0 +1,18 @@
+name: main
+
+on:
+  - push
+
+jobs:
+  main:
+    name: main
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - name: git clone https://github.com/paxtonhare/demo-magic
+        run: git clone https://github.com/paxtonhare/demo-magic
+
+      - name: NO_WAIT=true bash demo.sh
+        run: NO_WAIT=true bash demo.sh
