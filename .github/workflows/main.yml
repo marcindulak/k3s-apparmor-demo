@@ -1,7 +1,11 @@
 name: main
 
 on:
-  - push
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - 'docs/**'
 
 jobs:
   main:
